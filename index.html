@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dribble Dash</title>
+<style>
+  :root { --maxw: 700px; }
+  html, body { margin:0; height:100%; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background:#0b1424; color:#fff; display:grid; place-items:center;
+  }
+  .wrap { width:min(var(--maxw), 96vw); }
+  h1 { text-align:center; margin:10px 0 6px; font-size:clamp(18px,3.8vw,28px); }
+  .hud { display:flex; gap:10px; justify-content:space-between; align-items:center; margin:6px 0; }
+  .pill { background:#111a2f; padding:6px 10px; border-radius:999px; font-size:14px; box-shadow: inset 0 0 0 1px #243155; }
+  .btn { padding:8px 12px; border:1px solid #3a4a7a; background:#142044; color:#fff; border-radius:10px; cursor:pointer; }
+  .btn:disabled { opacity:.6; cursor:not-allowed; }
+  canvas { width:100%; height:auto; display:block; background:linear-gradient(#18305a,#0f1b36 55%); border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+  .controls {
+    display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin:8px 0 2px;
+  }
+  .cbtn { padding:10px 12px; border:1px solid #3a4a7a; background:#142044; border-radius:12px; text-align:center; user-select:none; touch-action:manipulation; }
+  .muted { opacity:.75; font-size:12px; text-align:center; margin:6px 0 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🏀 Dribble Dash</h1>
+    <div class="hud">
+      <span class="pill">Score: <b id="score">0</b></span>
+      <span class="pill">Best: <b id="best">0</b></span>
+      <div>
+        <button id="startBtn" class="btn">Start</button>
+        <button id="pauseBtn" class="btn">Pause</button>
+        <button id="resetBtn" class="btn">Reset</button>
+      </div>
+    </div>
+
+    <canvas id="game" width="700" height="900" aria-label="Dribble Dash basketball runner"></canvas>
+
+    <div class="controls" aria-label="On-screen controls">
+      <div class="cbtn" id="leftBtn">⬅️ Left</div>
+      <div class="cbtn" id="jumpBtn">⤴️ Hop</div>
+      <div class="cbtn" id="rightBtn">➡️ Right</div>
+    </div>
+    <div class="muted">Move: ◀️ ▶️ or on-screen. Hop: ⤴️ (Space/Up). Collect ⭐, avoid cones/defenders. Gets faster!</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const bestEl  = document.getElementById('best');
+  const startBtn= document.getElementById('startBtn');
+  const pauseBtn= document.getElementById('pauseBtn');
+  const resetBtn= document.getElementById('resetBtn');
+  const leftBtn = document.getElementById('leftBtn');
+  const rightBtn= document.getElementById('rightBtn');
+  const jumpBtn = document.getElementById('jumpBtn');
+
+  // Lanes (3 lanes)
+  const lanesX = [W*0.25, W*0.5, W*0.75];
+  const laneWidth = W*0.22;
+
+  // Player
+  const player = {
+    lane: 1,            // 0,1,2
+    x: lanesX[1], y: H*0.78,
+    targetX: lanesX[1],
+    radius: 26,
+    vx: 0, vy: 0,
+    onGround: true,
+    ballPhase: 0,       // for dribble animation
+    invuln: 0           // brief invulnerability after hit (ms)
+  };
+
+  // Game state
+  let obstacles = [];   // cones/defenders
+  let stars = [];       // collectibles
+  let scroll = 0;
+  let speed = 5;        // vertical scroll speed
+  let t = 0;            // time frames
+  let running = false;
+  let paused = false;
+  let score = 0;
+  let best = +localStorage.getItem('dribbleDashBest') || 0;
+  bestEl.textContent = best;
+
+  let raf = null;
+
+  const rand = (a,b)=> a + Math.random()*(b-a);
+
+  function reset() {
+    obstacles = [];
+    stars = [];
+    scroll = 0;
+    speed = 5;
+    t = 0;
+    running = false;
+    paused = false;
+    score = 0;
+    player.lane = 1;
+    player.x = lanesX[1]; player.targetX = lanesX[1];
+    player.vx = 0; player.vy = 0; player.onGround = true; player.invuln = 0;
+    draw();
+  }
+
+  function start() {
+    if (running) return;
+    running = true; paused = false;
+    loop();
+  }
+
+  function pauseToggle() {
+    if (!running) return;
+    paused = !paused;
+    if (!paused) loop();
+    else cancelAnimationFrame(raf);
+  }
+
+  function gameOver() {
+    running = false;
+    cancelAnimationFrame(raf);
+    if (score > best) { best = score; localStorage.setItem('dribbleDashBest', best); }
+    bestEl.textContent = best;
+    setTimeout(()=> alert(`Game Over! Score: ${score}`), 50);
+  }
+
+  function spawnStuff() {
+    // Spawn obstacles every ~55–75 frames, faster at higher speed
+    if (t % Math.max(25, Math.floor(70 - speed*3)) === 0) {
+      const kind = Math.random() < 0.6 ? 'cone' : 'defender';
+      // 1–2 lanes occupied
+      const lanesToUse = Math.random() < 0.75 ? 1 : 2;
+      const laneIndices = [0,1,2].sort(()=>Math.random()-0.5).slice(0, lanesToUse);
+      laneIndices.forEach(li=>{
+        obstacles.push({
+          kind,
+          lane: li,
+          x: lanesX[li],
+          y: -80,
+          w: laneWidth*0.4,
+          h: kind==='cone' ? 40 : 90,
+          hit: false
+        });
+      });
+    }
+    // Spawn stars occasionally
+    if (t % Math.max(35, Math.floor(110 - speed*5)) === 0) {
+      const li = Math.floor(rand(0,3));
+      stars.push({ lane: li, x: lanesX[li], y: -60, r: 16, taken: false });
+    }
+  }
+
+  function update() {
+    // Speed ramp
+    speed = Math.min(15, 5 + t/600);
+
+    // Player horizontal easing toward targetX
+    const dx = player.targetX - player.x;
+    player.vx = dx * 0.18;
+    player.x += player.vx;
+
+    // Player jump physics
+    if (!player.onGround) {
+      player.vy += 0.6;            // gravity
+      player.y += player.vy;
+      if (player.y >= H*0.78) {    // ground
+        player.y = H*0.78; player.vy = 0; player.onGround = true;
+      }
+    }
+
+    // Dribble animation
+    player.ballPhase += 0.25 + speed*0.02;
+
+    // Move world down
+    obstacles.forEach(o => o.y += speed);
+    stars.forEach(s => s.y += speed);
+    obstacles = obstacles.filter(o => o.y < H + 120);
+    stars = stars.filter(s => s.y < H + 80 && !s.taken);
+
+    // Collisions (skip if invulnerable)
+    if (player.invuln > 0) player.invuln -= 16;
+
+    const px = player.x, py = player.y;
+    obstacles.forEach(o=>{
+      if (o.hit) return;
+      // treat player as circle vs obstacle rectangle
+      const rx = o.x - o.w/2, ry = o.y - o.h/2, rw = o.w, rh = o.h;
+      const cx = Math.max(rx, Math.min(px, rx+rw));
+      const cy = Math.max(ry, Math.min(py, ry+rh));
+      const dist = Math.hypot(px - cx, py - cy);
+      if (dist < player.radius * 0.9 && player.invuln<=0) {
+        o.hit = true;
+        player.invuln = 650; // ms of invulnerability flash
+        // penalty: drop score chunk and slow slightly OR end game (choose one)
+        // For U10 friendlier: deduct and slow. End game if already invuln is off.
+        score = Math.max(0, score - 20);
+        speed = Math.max(5, speed - 2.5);
+        // Optional: End immediately – uncomment next line if you prefer sudden-death
+        // gameOver();
+      }
+    });
+
+    // Star pickup
+    stars.forEach(s=>{
+      const d = Math.hypot(px - s.x, py - s.y);
+      if (d < player.radius + s.r) {
+        s.taken = true;
+        score += 10;
+      }
+    });
+
+    // Scoring over time
+    score += Math.floor(speed*0.2);
+    scoreEl.textContent = score;
+  }
+
+  function drawCourt() {
+    // Scrolling lane lines
+    scroll += speed;
+    const stripeH = 80;
+    const offset = scroll % stripeH;
+
+    // Court base
+    ctx.fillStyle = '#0f1b36';
+    ctx.fillRect(0,0,W,H);
+
+    // Side boards
+    ctx.fillStyle = '#0b1424';
+    ctx.fillRect(0,0,W*0.08,H);
+    ctx.fillRect(W*0.92,0,W*0.08,H);
+
+    // Center lane lines
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.lineWidth = 4;
+    [W*0.375, W*0.625].forEach(x=>{
+      ctx.beginPath();
+      for (let y=-offset; y<H; y+=stripeH) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y+stripeH*0.5);
+      }
+      ctx.stroke();
+    });
+
+    // Free-throw arcs (just for vibe)
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(W/2, H*0.2, 80, Math.PI, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(W/2, H*0.8, 80, 0, Math.PI);
+    ctx.stroke();
+  }
+
+  function drawPlayer() {
+    // Shadow
+    ctx.globalAlpha = 0.2;
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y+18, 26, 10, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Body (simple character)
+    ctx.fillStyle = '#4cc9f0';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y-20, 20, 0, Math.PI*2); // head
+    ctx.fill();
+    ctx.fillStyle = '#90e0ef';
+    ctx.fillRect(player.x-16, player.y-2, 32, 26); // torso
+    ctx.fillStyle = '#ade8f4';
+    ctx.fillRect(player.x-16, player.y+22, 12, 18); // left leg
+    ctx.fillRect(player.x+4, player.y+22, 12, 18);  // right leg
+
+    // Ball (dribble)
+    const ballY = player.y + Math.sin(player.ballPhase)*10;
+    ctx.fillStyle = '#ff9f1c';
+    ctx.beginPath();
+    ctx.arc(player.x+26, ballY, 12, 0, Math.PI*2);
+    ctx.fill();
+    // Ball seams
+    ctx.strokeStyle = '#c76e00';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(player.x+26, ballY, 12, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(player.x+14, ballY); ctx.lineTo(player.x+38, ballY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(player.x+26, ballY-12); ctx.lineTo(player.x+26, ballY+12); ctx.stroke();
+
+    // Invulnerability flash
+    if (player.invuln > 0 && Math.floor(player.invuln/80)%2===0) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y-20, 24, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(o=>{
+      if (o.kind === 'cone') {
+        // Traffic cone
+        const y = o.y, x = o.x;
+        ctx.fillStyle = '#ff6b6b';
+        ctx.beginPath();
+        ctx.moveTo(x, y-30); ctx.lineTo(x-20, y+20); ctx.lineTo(x+20, y+20); ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x-16, y, 32, 6);
+      } else {
+        // Defender (simple figure)
+        const y = o.y, x = o.x;
+        ctx.fillStyle = '#9b5de5';
+        ctx.beginPath(); ctx.arc(x, y-28, 16, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#b794f6';
+        ctx.fillRect(x-14, y-10, 28, 44);
+      }
+    });
+  }
+
+  function drawStars() {
+    stars.forEach(s=>{
+      drawStar(s.x, s.y, s.r, s.r*0.5, 5, '#ffd166');
+    });
+  }
+
+  function drawStar(x,y,r1,r2,pts,color){
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i=0;i<pts*2;i++){
+      const ang = (Math.PI*i)/pts;
+      const r = i%2===0 ? r1 : r2;
+      const px = x + Math.cos(ang)*r;
+      const py = y + Math.sin(ang)*r;
+      if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    drawCourt();
+    drawStars();
+    drawObstacles();
+    drawPlayer();
+  }
+
+  function loop() {
+    if (!running || paused) return;
+    t++;
+    spawnStuff();
+    update();
+    draw();
+    if (running) raf = requestAnimationFrame(loop);
+
+    // Gentle end condition: too many hits could eventually end game (optional)
+    // If you prefer hard mode, call gameOver() on first collision instead.
+    if (speed <= 4.9) { gameOver(); }
+  }
+
+  // Controls
+  function moveLeft(){ if (player.lane > 0) { player.lane--; player.targetX = lanesX[player.lane]; } }
+  function moveRight(){ if (player.lane < 2){ player.lane++; player.targetX = lanesX[player.lane]; } }
+  function jump(){
+    if (player.onGround){
+      player.onGround = false; player.vy = -14;
+    }
+  }
+
+  // Keyboard
+  window.addEventListener('keydown', (e)=>{
+    if (e.key === 'ArrowLeft' ) moveLeft();
+    if (e.key === 'ArrowRight') moveRight();
+    if (e.key === 'ArrowUp' || e.code === 'Space') jump();
+  });
+
+  // Touch buttons
+  const addPress = (el, fn) => {
+    el.addEventListener('touchstart', (e)=>{ e.preventDefault(); fn(); }, {passive:false});
+    el.addEventListener('mousedown', (e)=>{ e.preventDefault(); fn(); });
+  };
+  addPress(leftBtn, moveLeft);
+  addPress(rightBtn, moveRight);
+  addPress(jumpBtn, jump);
+
+  // Buttons
+  startBtn.addEventListener('click', start);
+  pauseBtn.addEventListener('click', pauseToggle);
+  resetBtn.addEventListener('click', reset);
+
+  // Initial draw
+  reset();
+
+  // Difficulty knobs you can tweak:
+  // - Player radius: player.radius (bigger = easier to grab stars, harder to dodge)
+  // - Speed ramp: speed = Math.min(15, 5 + t/600)
+  // - Spawn rates: lines in spawnStuff() using Math.max(...)
+  // - Sudden-death mode: call gameOver() inside obstacle collision instead of penalizing
+})();
+</script>
+</body>
+</html>
