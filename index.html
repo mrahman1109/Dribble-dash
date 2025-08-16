@@ -3,34 +3,53 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dribble Dash</title>
+<title>Lang Park Pride – Dribble Dash</title>
 <style>
   :root { --maxw: 700px; }
   html, body { margin:0; height:100%; }
   body {
     font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background:#0b1424; color:#fff; display:grid; place-items:center;
+    background:#0b2a11; /* Pride deep green */
+    color:#f3d768;      /* Pride gold */
+    display:grid; place-items:center;
   }
   .wrap { width:min(var(--maxw), 96vw); }
-  h1 { text-align:center; margin:10px 0 6px; font-size:clamp(18px,3.8vw,28px); }
+  .titlebar { display:flex; gap:10px; align-items:center; justify-content:center; }
+  .titlebar img { width:36px; height:36px; object-fit:contain; }
+  h1 { text-align:center; margin:10px 0 6px; font-size:clamp(18px,3.8vw,28px); letter-spacing:.5px; }
   .hud { display:flex; gap:10px; justify-content:space-between; align-items:center; margin:6px 0; }
-  .pill { background:#111a2f; padding:6px 10px; border-radius:999px; font-size:14px; box-shadow: inset 0 0 0 1px #243155; }
-  .btn { padding:8px 12px; border:1px solid #3a4a7a; background:#142044; color:#fff; border-radius:10px; cursor:pointer; }
+  .leftHud { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .pill { background:#0f3a18; padding:6px 10px; border-radius:999px; font-size:14px; box-shadow: inset 0 0 0 1px #1d5a2a; color:#f7e27a; }
+  .btn, select { padding:8px 12px; border:1px solid #1d5a2a; background:#0f3a18; color:#f7e27a; border-radius:10px; cursor:pointer; }
   .btn:disabled { opacity:.6; cursor:not-allowed; }
-  canvas { width:100%; height:auto; display:block; background:linear-gradient(#18305a,#0f1b36 55%); border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
-  .controls {
-    display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin:8px 0 2px;
-  }
-  .cbtn { padding:10px 12px; border:1px solid #3a4a7a; background:#142044; border-radius:12px; text-align:center; user-select:none; touch-action:manipulation; }
-  .muted { opacity:.75; font-size:12px; text-align:center; margin:6px 0 0; }
+  canvas { width:100%; height:auto; display:block; background:linear-gradient(#103918,#0b2a11 55%); border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,.28); }
+  .controls { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin:8px 0 2px; }
+  .cbtn { padding:10px 12px; border:1px solid #1d5a2a; background:#0f3a18; border-radius:12px; text-align:center; user-select:none; touch-action:manipulation; color:#f7e27a; }
+  .muted { opacity:.85; font-size:12px; text-align:center; margin:6px 0 0; color:#e9d46f; }
 </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>🏀 Dribble Dash</h1>
+    <div class="titlebar">
+      <img id="clubLogoSmall" alt="Lang Park Pride logo" />
+      <h1>LANG PARK PRIDE – DRIBBLE DASH</h1>
+    </div>
+
     <div class="hud">
-      <span class="pill">Score: <b id="score">0</b></span>
-      <span class="pill">Best: <b id="best">0</b></span>
+      <div class="leftHud">
+        <span class="pill">Score: <b id="score">0</b></span>
+        <span class="pill">Best: <b id="best">0</b></span>
+        <span class="pill">Time: <b id="timeLeft">60</b>s</span>
+        <span class="pill">Hits: <b id="hits">0</b>/5</span>
+        <label class="pill" style="display:flex;gap:8px;align-items:center;">
+          Coach Mode
+          <select id="coachMode">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+      </div>
       <div>
         <button id="startBtn" class="btn">Start</button>
         <button id="pauseBtn" class="btn">Pause</button>
@@ -45,55 +64,85 @@
       <div class="cbtn" id="jumpBtn">⤴️ Hop</div>
       <div class="cbtn" id="rightBtn">➡️ Right</div>
     </div>
-    <div class="muted">Move: ◀️ ▶️ or on-screen. Hop: ⤴️ (Space/Up). Collect ⭐, avoid cones/defenders. Gets faster!</div>
+    <div class="muted">Move: ◀️ ▶️ or buttons. Hop: ⤴️ (Space/Up). 1-minute run → bonus shot! Avoid cones/defenders; 5 hits ends the game.</div>
   </div>
 
 <script>
 (() => {
+  // ---------- Branding / assets ----------
+  const LOGO_SRC = 'logo.png';
+  const logoImg = new Image();
+  logoImg.src = LOGO_SRC;
+  logoImg.onload = ()=> document.getElementById('clubLogoSmall').src = LOGO_SRC;
+
+  // ---------- Canvas & UI ----------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
 
   const scoreEl = document.getElementById('score');
   const bestEl  = document.getElementById('best');
+  const timeEl  = document.getElementById('timeLeft');
+  const hitsEl  = document.getElementById('hits');
   const startBtn= document.getElementById('startBtn');
   const pauseBtn= document.getElementById('pauseBtn');
   const resetBtn= document.getElementById('resetBtn');
   const leftBtn = document.getElementById('leftBtn');
   const rightBtn= document.getElementById('rightBtn');
   const jumpBtn = document.getElementById('jumpBtn');
+  const coachSel= document.getElementById('coachMode');
 
-  // Lanes (3 lanes)
+  // ---------- Lanes ----------
   const lanesX = [W*0.25, W*0.5, W*0.75];
   const laneWidth = W*0.22;
 
-  // Player
+  // ---------- Leaderboard ----------
+  const BEST_KEY = 'prideDribbleDashBest';
+  let best = +localStorage.getItem(BEST_KEY) || 0;
+  bestEl.textContent = best;
+
+  // ---------- Player ----------
+  const KIT_GREEN = '#0f3a18'; // pulled from logo
+  const KIT_GREEN_DARK = '#0a2b12';
+  const GOLD = '#f3d768';
+
   const player = {
-    lane: 1,            // 0,1,2
+    lane: 1,
     x: lanesX[1], y: H*0.78,
     targetX: lanesX[1],
     radius: 26,
     vx: 0, vy: 0,
     onGround: true,
-    ballPhase: 0,       // for dribble animation
-    invuln: 0           // brief invulnerability after hit (ms)
+    ballPhase: 0,
+    invuln: 0
   };
 
-  // Game state
-  let obstacles = [];   // cones/defenders
-  let stars = [];       // collectibles
+  // ---------- Game state ----------
+  let obstacles = [];
+  let stars = [];
   let scroll = 0;
-  let speed = 5;        // vertical scroll speed
-  let t = 0;            // time frames
+  let speed = 5;
+  let t = 0;
   let running = false;
   let paused = false;
   let score = 0;
-  let best = +localStorage.getItem('dribbleDashBest') || 0;
-  bestEl.textContent = best;
-
+  let hits = 0;
+  let timeLeft = 60;       // seconds
+  let gamePhase = 'run';   // 'run' | 'shot' | 'over'
   let raf = null;
+  let timerId = null;
 
-  const rand = (a,b)=> a + Math.random()*(b-a);
+  // Coach Mode presets
+  const MODES = {
+    easy:   { spawnBase: 78, starBase: 115, speedRamp: 700, hitPenalty: {score:10, speed:2}, invulnMS:800 },
+    normal: { spawnBase: 70, starBase: 110, speedRamp: 600, hitPenalty: {score:20, speed:2.5}, invulnMS:650 },
+    hard:   { spawnBase: 62, starBase: 100, speedRamp: 520, hitPenalty: {score:30, speed:3.0}, invulnMS:550 },
+  };
+  let mode = MODES[coachSel.value];
+
+  coachSel.addEventListener('change', ()=>{
+    mode = MODES[coachSel.value];
+  });
 
   function reset() {
     obstacles = [];
@@ -101,18 +150,35 @@
     scroll = 0;
     speed = 5;
     t = 0;
+    score = 0;
+    hits = 0;
+    timeLeft = 60;
+    gamePhase = 'run';
     running = false;
     paused = false;
-    score = 0;
     player.lane = 1;
     player.x = lanesX[1]; player.targetX = lanesX[1];
     player.vx = 0; player.vy = 0; player.onGround = true; player.invuln = 0;
-    draw();
+    scoreEl.textContent = score;
+    hitsEl.textContent = hits;
+    timeEl.textContent = timeLeft;
+    clearInterval(timerId);
+    draw(); // show idle screen
   }
 
   function start() {
     if (running) return;
     running = true; paused = false;
+    // 1-minute countdown
+    timerId = setInterval(()=>{
+      if (paused || !running) return;
+      timeLeft--;
+      timeEl.textContent = timeLeft;
+      if (timeLeft <= 0 && gamePhase === 'run') {
+        gamePhase = 'shot';
+      }
+      if (gamePhase === 'over') clearInterval(timerId);
+    }, 1000);
     loop();
   }
 
@@ -123,182 +189,250 @@
     else cancelAnimationFrame(raf);
   }
 
-  function gameOver() {
+  function endGame() {
     running = false;
+    gamePhase = 'over';
+    clearInterval(timerId);
     cancelAnimationFrame(raf);
-    if (score > best) { best = score; localStorage.setItem('dribbleDashBest', best); }
+    if (score > best) { best = score; localStorage.setItem(BEST_KEY, best); }
     bestEl.textContent = best;
-    setTimeout(()=> alert(`Game Over! Score: ${score}`), 50);
+    setTimeout(()=> alert(`Full Time! Score: ${score}`), 50);
   }
 
+  // ---------- Spawning / Updates ----------
   function spawnStuff() {
-    // Spawn obstacles every ~55–75 frames, faster at higher speed
-    if (t % Math.max(25, Math.floor(70 - speed*3)) === 0) {
+    // Obstacles based on coach mode
+    if (t % Math.max(25, Math.floor(mode.spawnBase - speed*3)) === 0) {
       const kind = Math.random() < 0.6 ? 'cone' : 'defender';
-      // 1–2 lanes occupied
       const lanesToUse = Math.random() < 0.75 ? 1 : 2;
-      const laneIndices = [0,1,2].sort(()=>Math.random()-0.5).slice(0, lanesToUse);
-      laneIndices.forEach(li=>{
-        obstacles.push({
-          kind,
-          lane: li,
-          x: lanesX[li],
-          y: -80,
-          w: laneWidth*0.4,
-          h: kind==='cone' ? 40 : 90,
-          hit: false
-        });
+      const picks = [0,1,2].sort(()=>Math.random()-0.5).slice(0, lanesToUse);
+      picks.forEach(li=>{
+        obstacles.push({ kind, lane: li, x: lanesX[li], y: -80, w: laneWidth*0.4, h: kind==='cone'?40:90, hit:false });
       });
     }
-    // Spawn stars occasionally
-    if (t % Math.max(35, Math.floor(110 - speed*5)) === 0) {
-      const li = Math.floor(rand(0,3));
-      stars.push({ lane: li, x: lanesX[li], y: -60, r: 16, taken: false });
+    if (t % Math.max(35, Math.floor(mode.starBase - speed*5)) === 0) {
+      const li = Math.floor(Math.random()*3);
+      stars.push({ lane: li, x: lanesX[li], y: -60, r: 16, taken:false });
     }
   }
 
-  function update() {
-    // Speed ramp
-    speed = Math.min(15, 5 + t/600);
+  function updateRun() {
+    // Ramp speed by mode
+    speed = Math.min(15, 5 + t/mode.speedRamp);
 
-    // Player horizontal easing toward targetX
+    // Lane easing
     const dx = player.targetX - player.x;
     player.vx = dx * 0.18;
     player.x += player.vx;
 
-    // Player jump physics
-    if (!player.onGround) {
-      player.vy += 0.6;            // gravity
-      player.y += player.vy;
-      if (player.y >= H*0.78) {    // ground
-        player.y = H*0.78; player.vy = 0; player.onGround = true;
-      }
-    }
+    // Jump physics
+    if (!player.onGround) { player.vy += 0.6; player.y += player.vy;
+      if (player.y >= H*0.78) { player.y = H*0.78; player.vy=0; player.onGround=true; } }
 
-    // Dribble animation
     player.ballPhase += 0.25 + speed*0.02;
 
-    // Move world down
     obstacles.forEach(o => o.y += speed);
     stars.forEach(s => s.y += speed);
     obstacles = obstacles.filter(o => o.y < H + 120);
     stars = stars.filter(s => s.y < H + 80 && !s.taken);
 
-    // Collisions (skip if invulnerable)
     if (player.invuln > 0) player.invuln -= 16;
 
+    // Collisions
     const px = player.x, py = player.y;
     obstacles.forEach(o=>{
       if (o.hit) return;
-      // treat player as circle vs obstacle rectangle
       const rx = o.x - o.w/2, ry = o.y - o.h/2, rw = o.w, rh = o.h;
       const cx = Math.max(rx, Math.min(px, rx+rw));
       const cy = Math.max(ry, Math.min(py, ry+rh));
-      const dist = Math.hypot(px - cx, py - cy);
-      if (dist < player.radius * 0.9 && player.invuln<=0) {
+      const d = Math.hypot(px - cx, py - cy);
+      if (d < player.radius * 0.9 && player.invuln<=0) {
         o.hit = true;
-        player.invuln = 650; // ms of invulnerability flash
-        // penalty: drop score chunk and slow slightly OR end game (choose one)
-        // For U10 friendlier: deduct and slow. End game if already invuln is off.
-        score = Math.max(0, score - 20);
-        speed = Math.max(5, speed - 2.5);
-        // Optional: End immediately – uncomment next line if you prefer sudden-death
-        // gameOver();
+        player.invuln = mode.invulnMS;
+        hits++; hitsEl.textContent = hits;
+        // penalties
+        score = Math.max(0, score - mode.hitPenalty.score);
+        speed = Math.max(5, speed - mode.hitPenalty.speed);
+        if (hits >= 5) { // 5-hit rule
+          gamePhase = 'shot'; // jump early to shot phase
+        }
       }
     });
 
-    // Star pickup
+    // Stars
     stars.forEach(s=>{
       const d = Math.hypot(px - s.x, py - s.y);
-      if (d < player.radius + s.r) {
-        s.taken = true;
-        score += 10;
-      }
+      if (d < player.radius + s.r) { s.taken = true; score += 10; }
     });
 
-    // Scoring over time
+    // Time score
     score += Math.floor(speed*0.2);
     scoreEl.textContent = score;
   }
 
+  // ---------- Bonus Shot Mini-Game ----------
+  // Two timing bars: Power then Accuracy.
+  let shotState = { stage:'power', // 'power' -> 'accuracy' -> 'result'
+                    powerVal:0, accuracyVal:0,
+                    oscDir:1, val:0.0,
+                    targetPower: Math.random()*0.6 + 0.2,     // target zones
+                    targetAcc:   Math.random()*0.6 + 0.2 };
+
+  function drawShotUI() {
+    // Backdrop
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(W*0.12, H*0.14, W*0.76, H*0.56);
+    ctx.strokeStyle = GOLD; ctx.lineWidth = 2;
+    ctx.strokeRect(W*0.12, H*0.14, W*0.76, H*0.56);
+
+    // Title
+    ctx.fillStyle = GOLD; ctx.textAlign='center';
+    ctx.font = 'bold 26px system-ui';
+    ctx.fillText('BONUS FREE-THROW', W/2, H*0.18);
+
+    // Hoop
+    ctx.strokeStyle = GOLD; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(W/2, H*0.28, 35, 0, Math.PI*2); ctx.stroke();
+
+    // Bars
+    const barW = W*0.6, barH = 18, barX = (W-barW)/2;
+    // Power
+    ctx.fillStyle = '#143d1a';
+    ctx.fillRect(barX, H*0.36, barW, barH);
+    // target window for power
+    const tpX = barX + shotState.targetPower*barW;
+    ctx.fillStyle = 'rgba(243,215,104,0.55)';
+    ctx.fillRect(tpX - 0.06*barW, H*0.36, 0.12*barW, barH);
+    // cursor
+    ctx.fillStyle = '#ffbf69';
+    ctx.fillRect(barX + shotState.val*barW - 3, H*0.36-6, 6, barH+12);
+
+    ctx.fillStyle = GOLD; ctx.font = '14px system-ui';
+    ctx.fillText('POWER', W/2, H*0.36 - 10);
+
+    // Accuracy
+    ctx.fillStyle = '#143d1a';
+    ctx.fillRect(barX, H*0.46, barW, barH);
+    const taX = barX + shotState.targetAcc*barW;
+    ctx.fillStyle = 'rgba(243,215,104,0.55)';
+    ctx.fillRect(taX - 0.06*barW, H*0.46, 0.12*barW, barH);
+    // cursor only when on accuracy stage
+    if (shotState.stage !== 'power') {
+      ctx.fillStyle = '#ffbf69';
+      ctx.fillRect(barX + shotState.val*barW - 3, H*0.46-6, 6, barH+12);
+    }
+    ctx.fillStyle = GOLD; ctx.font = '14px system-ui';
+    ctx.fillText('ACCURACY', W/2, H*0.46 - 10);
+
+    ctx.fillStyle = GOLD; ctx.font='13px system-ui';
+    ctx.fillText(shotState.stage==='power' ? 'Tap / Space to lock POWER' : 'Tap / Space to lock ACCURACY', W/2, H*0.56);
+  }
+
+  function updateShot() {
+    // oscillate 0..1
+    const speed = 0.015; // cursor sweep speed
+    shotState.val += shotState.oscDir * speed;
+    if (shotState.val >= 1) { shotState.val = 1; shotState.oscDir = -1; }
+    if (shotState.val <= 0) { shotState.val = 0; shotState.oscDir = 1; }
+  }
+
+  function handleShotInput() {
+    if (shotState.stage === 'power') {
+      shotState.powerVal = shotState.val;
+      shotState.stage = 'accuracy';
+      // reset cursor to make it fair
+      shotState.val = 0; shotState.oscDir = 1;
+    } else if (shotState.stage === 'accuracy') {
+      shotState.accuracyVal = shotState.val;
+      shotState.stage = 'result';
+      resolveShot();
+    }
+  }
+
+  function resolveShot() {
+    // success if both within target ± window
+    const window = 0.06; // 12% wide windows shown above
+    const okPower = Math.abs(shotState.powerVal - shotState.targetPower) <= window;
+    const okAcc   = Math.abs(shotState.accuracyVal - shotState.targetAcc) <= window;
+
+    let bonus = 0;
+    if (okPower && okAcc) bonus = 100;
+    else if (okPower || okAcc) bonus = 40;
+    else bonus = 0;
+
+    score += bonus; scoreEl.textContent = score;
+
+    setTimeout(()=> {
+      alert(bonus > 0 ? `Splash! +${bonus} bonus` : 'Missed the bonus shot!');
+      endGame();
+    }, 80);
+  }
+
+  // ---------- Drawing ----------
   function drawCourt() {
-    // Scrolling lane lines
-    scroll += speed;
-    const stripeH = 80;
-    const offset = scroll % stripeH;
-
     // Court base
-    ctx.fillStyle = '#0f1b36';
-    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#0b2a11'; ctx.fillRect(0,0,W,H);
+    // Sides
+    ctx.fillStyle = '#071d0b';
+    ctx.fillRect(0,0,W*0.08,H); ctx.fillRect(W*0.92,0,W*0.08,H);
 
-    // Side boards
-    ctx.fillStyle = '#0b1424';
-    ctx.fillRect(0,0,W*0.08,H);
-    ctx.fillRect(W*0.92,0,W*0.08,H);
-
-    // Center lane lines
-    ctx.strokeStyle = 'rgba(255,255,255,.12)';
-    ctx.lineWidth = 4;
+    // Scrolling center lines (gold dashes)
+    scroll += speed;
+    const stripeH = 80, offset = scroll % stripeH;
+    ctx.strokeStyle = 'rgba(247,226,122,.45)'; ctx.lineWidth = 4;
     [W*0.375, W*0.625].forEach(x=>{
       ctx.beginPath();
-      for (let y=-offset; y<H; y+=stripeH) {
-        ctx.moveTo(x, y);
-        ctx.lineTo(x, y+stripeH*0.5);
-      }
+      for (let y=-offset; y<H; y+=stripeH) { ctx.moveTo(x,y); ctx.lineTo(x, y+stripeH*0.5); }
       ctx.stroke();
     });
 
-    // Free-throw arcs (just for vibe)
-    ctx.strokeStyle = 'rgba(255,255,255,.08)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(W/2, H*0.2, 80, Math.PI, 0);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(W/2, H*0.8, 80, 0, Math.PI);
-    ctx.stroke();
+    // Arcs
+    ctx.strokeStyle = 'rgba(247,226,122,.30)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(W/2, H*0.2, 80, Math.PI, 0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2, H*0.8, 80, 0, Math.PI); ctx.stroke();
+
+    // Watermark logo
+    if (logoImg.complete && logoImg.naturalWidth) {
+      const s = 220; ctx.save(); ctx.globalAlpha = 0.08;
+      ctx.drawImage(logoImg, W/2 - s/2, H*0.45 - s/2, s, s);
+      ctx.restore();
+    }
   }
 
   function drawPlayer() {
     // Shadow
     ctx.globalAlpha = 0.2;
-    ctx.beginPath();
-    ctx.ellipse(player.x, player.y+18, 26, 10, 0, 0, Math.PI*2);
-    ctx.fillStyle = '#000';
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.ellipse(player.x, player.y+18, 26, 10, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#000'; ctx.fill(); ctx.globalAlpha = 1;
 
-    // Body (simple character)
-    ctx.fillStyle = '#4cc9f0';
-    ctx.beginPath();
-    ctx.arc(player.x, player.y-20, 20, 0, Math.PI*2); // head
-    ctx.fill();
-    ctx.fillStyle = '#90e0ef';
-    ctx.fillRect(player.x-16, player.y-2, 32, 26); // torso
-    ctx.fillStyle = '#ade8f4';
-    ctx.fillRect(player.x-16, player.y+22, 12, 18); // left leg
-    ctx.fillRect(player.x+4, player.y+22, 12, 18);  // right leg
+    // Kit in club green
+    ctx.fillStyle = KIT_GREEN; // head “cap”
+    ctx.beginPath(); ctx.arc(player.x, player.y-20, 20, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = KIT_GREEN; // torso
+    ctx.fillRect(player.x-16, player.y-2, 32, 26);
 
-    // Ball (dribble)
+    // Shorts gold
+    ctx.fillStyle = GOLD; ctx.fillRect(player.x-16, player.y+22, 32, 18);
+
+    // Legs darker green
+    ctx.fillStyle = KIT_GREEN_DARK;
+    ctx.fillRect(player.x-16, player.y+40, 12, 18);
+    ctx.fillRect(player.x+4,  player.y+40, 12, 18);
+
+    // Paw badge
+    ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(player.x, player.y+8, 6, 0, Math.PI*2); ctx.fill();
+
+    // Ball gold (dribble)
     const ballY = player.y + Math.sin(player.ballPhase)*10;
-    ctx.fillStyle = '#ff9f1c';
-    ctx.beginPath();
-    ctx.arc(player.x+26, ballY, 12, 0, Math.PI*2);
-    ctx.fill();
-    // Ball seams
-    ctx.strokeStyle = '#c76e00';
-    ctx.lineWidth = 2;
+    ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(player.x+26, ballY, 12, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#a5891e'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(player.x+26, ballY, 12, 0, Math.PI*2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(player.x+14, ballY); ctx.lineTo(player.x+38, ballY); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(player.x+26, ballY-12); ctx.lineTo(player.x+26, ballY+12); ctx.stroke();
 
-    // Invulnerability flash
     if (player.invuln > 0 && Math.floor(player.invuln/80)%2===0) {
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(player.x, player.y-20, 24, 0, Math.PI*2);
-      ctx.fill();
+      ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(player.x, player.y-20, 24, 0, Math.PI*2); ctx.fill();
       ctx.globalAlpha = 1;
     }
   }
@@ -306,76 +440,86 @@
   function drawObstacles() {
     obstacles.forEach(o=>{
       if (o.kind === 'cone') {
-        // Traffic cone
-        const y = o.y, x = o.x;
-        ctx.fillStyle = '#ff6b6b';
-        ctx.beginPath();
-        ctx.moveTo(x, y-30); ctx.lineTo(x-20, y+20); ctx.lineTo(x+20, y+20); ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(x-16, y, 32, 6);
+        const y=o.y,x=o.x;
+        ctx.fillStyle = '#b03030';
+        ctx.beginPath(); ctx.moveTo(x,y-30); ctx.lineTo(x-20,y+20); ctx.lineTo(x+20,y+20); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = GOLD; ctx.fillRect(x-16, y, 32, 6);
       } else {
-        // Defender (simple figure)
-        const y = o.y, x = o.x;
-        ctx.fillStyle = '#9b5de5';
+        const y=o.y,x=o.x;
+        ctx.fillStyle = '#5e2ea8';
         ctx.beginPath(); ctx.arc(x, y-28, 16, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = '#b794f6';
+        ctx.fillStyle = '#7a4ed6';
         ctx.fillRect(x-14, y-10, 28, 44);
       }
     });
   }
 
   function drawStars() {
-    stars.forEach(s=>{
-      drawStar(s.x, s.y, s.r, s.r*0.5, 5, '#ffd166');
+    stars.forEach(s=> drawPaw(s.x, s.y, s.r, GOLD));
+  }
+  function drawPaw(x,y,r,color){
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    const tR = r*0.45, off = r*0.9;
+    [[-off, -off*0.2],[-off*0.33,-off*0.9],[off*0.33,-off*0.9],[off,-off*0.2]].forEach(([dx,dy])=>{
+      ctx.beginPath(); ctx.arc(x+dx*0.5, y+dy*0.5, tR, 0, Math.PI*2); ctx.fill();
     });
   }
 
-  function drawStar(x,y,r1,r2,pts,color){
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    for (let i=0;i<pts*2;i++){
-      const ang = (Math.PI*i)/pts;
-      const r = i%2===0 ? r1 : r2;
-      const px = x + Math.cos(ang)*r;
-      const py = y + Math.sin(ang)*r;
-      if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  function drawIdleOverlay() {
+    if (!running || paused) {
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(W*0.12, H*0.18, W*0.76, H*0.32);
+      ctx.strokeStyle = GOLD; ctx.lineWidth = 2;
+      ctx.strokeRect(W*0.12, H*0.18, W*0.76, H*0.32);
+      if (logoImg.complete && logoImg.naturalWidth) {
+        const s = 140; ctx.drawImage(logoImg, W/2 - s/2, H*0.2 + 16, s, s);
+      }
+      ctx.fillStyle = GOLD; ctx.textAlign='center';
+      ctx.font='bold 28px system-ui'; ctx.fillText('LANG PARK PRIDE', W/2, H*0.2+180);
+      ctx.font='20px system-ui'; ctx.fillText('DRIBBLE DASH', W/2, H*0.2+210);
+      ctx.font='14px system-ui'; ctx.fillText('Tap START then use ⬅️ ⤴️ ➡️', W/2, H*0.2+240);
+      ctx.restore();
     }
-    ctx.closePath(); ctx.fill();
   }
 
   function draw() {
     ctx.clearRect(0,0,W,H);
     drawCourt();
-    drawStars();
-    drawObstacles();
-    drawPlayer();
+    if (gamePhase==='run') {
+      drawStars(); drawObstacles(); drawPlayer();
+    } else if (gamePhase==='shot') {
+      // show a dimmed court and the shot UI
+      drawStars(); drawObstacles(); drawPlayer();
+      drawShotUI();
+    }
+    if (!running) drawIdleOverlay();
   }
 
   function loop() {
     if (!running || paused) return;
     t++;
-    spawnStuff();
-    update();
+    if (gamePhase==='run') {
+      spawnStuff();
+      updateRun();
+      if (timeLeft <= 0 || hits >= 5) gamePhase='shot';
+    } else if (gamePhase==='shot') {
+      updateShot();
+    }
     draw();
-    if (running) raf = requestAnimationFrame(loop);
-
-    // Gentle end condition: too many hits could eventually end game (optional)
-    // If you prefer hard mode, call gameOver() on first collision instead.
-    if (speed <= 4.9) { gameOver(); }
+    raf = requestAnimationFrame(loop);
   }
 
-  // Controls
+  // ---------- Controls ----------
   function moveLeft(){ if (player.lane > 0) { player.lane--; player.targetX = lanesX[player.lane]; } }
   function moveRight(){ if (player.lane < 2){ player.lane++; player.targetX = lanesX[player.lane]; } }
-  function jump(){
-    if (player.onGround){
-      player.onGround = false; player.vy = -14;
-    }
-  }
+  function jump(){ if (gamePhase==='run' && player.onGround){ player.onGround = false; player.vy = -14; } }
 
   // Keyboard
   window.addEventListener('keydown', (e)=>{
+    if (gamePhase==='shot' && (e.key===' ' || e.code==='Space')) { handleShotInput(); return; }
     if (e.key === 'ArrowLeft' ) moveLeft();
     if (e.key === 'ArrowRight') moveRight();
     if (e.key === 'ArrowUp' || e.code === 'Space') jump();
@@ -390,6 +534,10 @@
   addPress(rightBtn, moveRight);
   addPress(jumpBtn, jump);
 
+  // Canvas tap during shot for mobile
+  canvas.addEventListener('touchstart', (e)=>{ if (gamePhase==='shot'){ e.preventDefault(); handleShotInput(); } }, {passive:false});
+  canvas.addEventListener('mousedown', (e)=>{ if (gamePhase==='shot'){ e.preventDefault(); handleShotInput(); } });
+
   // Buttons
   startBtn.addEventListener('click', start);
   pauseBtn.addEventListener('click', pauseToggle);
@@ -397,12 +545,6 @@
 
   // Initial draw
   reset();
-
-  // Difficulty knobs you can tweak:
-  // - Player radius: player.radius (bigger = easier to grab stars, harder to dodge)
-  // - Speed ramp: speed = Math.min(15, 5 + t/600)
-  // - Spawn rates: lines in spawnStuff() using Math.max(...)
-  // - Sudden-death mode: call gameOver() inside obstacle collision instead of penalizing
 })();
 </script>
 </body>
